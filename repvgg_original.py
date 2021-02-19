@@ -124,8 +124,11 @@ import oneflow.typing as tp
 #     )
 
 
+H = W = 16
+
+
 @flow.global_function()
-def test_original_conv_bn(x: tp.Numpy.Placeholder(shape=(1, 192, 64, 64))) -> tp.Numpy:
+def test_original_conv_bn(x: tp.Numpy.Placeholder(shape=(1, 192, H, W))) -> tp.Numpy:
     weight_shape = (192, 192, 3, 3)
     _conv_weight = flow.get_variable(
         name="weight",
@@ -135,7 +138,7 @@ def test_original_conv_bn(x: tp.Numpy.Placeholder(shape=(1, 192, 64, 64))) -> tp
     conv_out = flow.nn.conv2d(x, _conv_weight, 1, (0, 0, 1, 1), groups=1, name="conv2d")
 
     bn_conv = flow.layers.batch_normalization(
-        conv_out, axis=1, epsilon=1e-5, name="bn_layer"
+        conv_out, axis=1, epsilon=1e-5, name="bn_layer", training=False, trainable=False,
     )
     return bn_conv
 
@@ -163,11 +166,11 @@ flow.load_variables({"weight": conv_weight_data,
                      "bn_layer-beta": conv_bn_beta_data,
                      "bn_layer-moving_mean": conv_bn_mean_data,
                      "bn_layer-moving_variance": conv_bn_var_data})
-
 # x = np.random.randn(1, 192, 64, 64).astype(np.float32)
-x = np.ones(shape=(1, 192, 64, 64)).astype(np.float32)
+H = W = 16
+x = np.ones(shape=(1, 192, H, W)).astype(np.float32)
 
 fused_out = test_original_conv_bn(x)
 print(fused_out.shape)
 print(fused_out)
-np.save('original_conv_bnv2.npz', fused_out)
+np.save('original_conv_bnv3', fused_out)
