@@ -1,31 +1,8 @@
+"""
+Convert BN->CONV and CONV+BN->CONV
+"""
 import numpy as np
 import os
-
-
-weight_folder = "snapshot_epoch_90"
-
-weight_folder_list = os.listdir(weight_folder)
-
-# for folder in weight_folder_list:
-#     print(folder)
-
-sample_weight_folder = "RepVGGstage_3_17"
-# sample_weight_folder = "RepVGGstage_1_2"
-
-
-sample_weight_list = []
-for folder in weight_folder_list:
-    # RepVGGstage_3_12_3x3_convbnlayer-moving_variance
-    # -> ['RepVGGstage', '3', '12', '3x3', 'convbnlayer-moving', 'variance']
-    folder_name_split = folder.split('_')
-    if len(folder_name_split) <= 2:
-        # Like RepVGGclassify_bias-momentum
-        # print(folder_name_split)
-        continue
-    format_folder_name = folder_name_split[0] + "_" + folder_name_split[1] + "_" + folder_name_split[2]
-    if format_folder_name == sample_weight_folder:
-        sample_weight_list.append(folder)
-    # raise Exception("Stop")
 
 CONV_WEIGHT_NAME = "conv_conv_layer_weight"
 CONV_KERNEL_SIZE_NAME = ["1x1", "3x3"]
@@ -37,47 +14,73 @@ IDENTITY_BRANCH_BN_PARAM_NAME = ["identity_bn_layer-moving_mean",
                                  "identity_bn_layer-moving_variance",
                                  "identity_bn_layer-beta",
                                  "identity_bn_layer-gamma"]
-print(sample_weight_list)
-
-CONV_WEIGHT_3X3_LIST = []
-CONV_WEIGHT_3X3_BN_LIST = []
-CONV_WEIGHT_1X1_LIST = []
-CONVWEIGHT_1X1_BN_LIST = []
+CLASSIFY_NAME="RepVGGclassify"
+CLASSIFY_BRANCH_PARAM_NAME = ["dense_weight", "dense_bias"]
 
 
-def fuse_conv_bn(weight_folder, weight_folder_prefix, kernel_size, in_channel, out_channel):
+def conv_bn_fuse(weight_folder, weight_folder_prefix, kernel_size, eps, in_channel, out_channel, groups):
     """
     Fuse BN into ConvLayer
     :param weight_folder: The name for the folder, example: snapshot_epoch_90
     :param weight_folder_prefix: The prefix name for the folder, example: RepVGGstage_3_17
     :param kernel_size: The kernel size, if it is 1x1, it will be pad to 3x3
+    :param if_identity: Whether the branch is identity.
+    :param eps: The epsilon used in BN Layer variance
+    :param in_channel: The num of input channel.
+    :param out_channel: The num of output channel.
     :return: Fused kernel weight, Fused kernel bias
     """
+    assert in_channel // groups, "The input channel should be divided by groups"
+
+    if_identity = False
     if kernel_size == 1:
         KERNEL_SIZE_NAME = CONV_KERNEL_SIZE_NAME[0]  # "1x1"
     elif kernel_size == 3:
         KERNEL_SIZE_NAME = CONV_KERNEL_SIZE_NAME[1]  # "3x3"
+    elif kernel_size == 0:
+        if_identity = True
     else:
         raise Exception("Wrong Conv Kernel size to Fuse!!!!")
 
     # Concat strings to get the folder name.
-    kernel_weight_name = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_WEIGHT_NAME
-    kernel_bn_mean = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[0]
-    kernel_bn_var = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[1]
-    kernel_bn_beta = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[2]
-    kernel_bn_gamma = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[3]
+    if not if_identity:
+        # Conv weight name
+        kernel_weight_name = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_WEIGHT_NAME
+        kernel_bn_mean = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[0]
+        kernel_bn_var = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[1]
+        kernel_bn_beta = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[2]
+        kernel_bn_gamma = weight_folder_prefix + "_" + KERNEL_SIZE_NAME + "_" + CONV_BRANCH_BN_PARAM_NAME[3]
+    else:
+        # Identity weight name, and identity weight will be constructed in below.
+        kernel_bn_mean = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[0]
+        kernel_bn_var = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[1]
+        kernel_bn_beta = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[2]
+        kernel_bn_gamma = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[3]
 
     # concat "out" to get the weight file.
-    conv_weight_data_name = os.path.join(weight_folder, kernel_weight_name, 'out')
+    if not if_identity:
+        conv_weight_data_name = os.path.join(weight_folder, kernel_weight_name, 'out')
+
     conv_bn_mean_data_name = os.path.join(weight_folder, kernel_bn_mean, 'out')
     conv_bn_var_data_name = os.path.join(weight_folder, kernel_bn_var, 'out')
     conv_bn_beta_data_name = os.path.join(weight_folder, kernel_bn_beta, 'out')
     conv_bn_gamma_data_name = os.path.join(weight_folder, kernel_bn_gamma, 'out')
 
     # Read data from weight file.
-    with open(conv_weight_data_name, 'rb') as f:
-        conv_weight_data = f.read()
-        conv_weight_data = np.frombuffer(conv_weight_data, dtype=np.float32)
+    if not if_identity:
+        # Conv branch has its weight
+        with open(conv_weight_data_name, 'rb') as f:
+            conv_weight_data = f.read()
+            conv_weight_data = np.frombuffer(conv_weight_data, dtype=np.float32)
+    else:
+        # Identity branch:
+        input_dim = in_channel // groups
+        # Because Identity ensure inchannel equal to outchannel.
+        conv_weight_data = np.zeros(shape=(in_channel, input_dim, 3, 3), dtype=np.float32)
+
+        # Identity equal to a unit matrix
+        for i in range(in_channel):
+            conv_weight_data[i, i % input_dim, 1, 1] = 1
 
     with open(conv_bn_mean_data_name, 'rb') as f:
         conv_bn_mean_data = f.read()
@@ -97,14 +100,14 @@ def fuse_conv_bn(weight_folder, weight_folder_prefix, kernel_size, in_channel, o
 
     # Reshape the conv weight.
     if kernel_size == 1:
-        conv_weight_data = np.reshape(conv_weight_data, newshape=(out_channel, in_channel, 1, 1))
         # Padding to 3x3 Kernel.
+        conv_weight_data = np.reshape(conv_weight_data, newshape=(out_channel, in_channel // groups, 1, 1))
         conv_weight_data = np.pad(conv_weight_data, ((0, 0), (0, 0), (1, 1), (1, 1)), 'constant', constant_values=0)
     elif kernel_size == 3:
-        conv_weight_data = np.reshape(conv_weight_data, newshape=(out_channel, in_channel, 3, 3))
+        conv_weight_data = np.reshape(conv_weight_data, newshape=(out_channel, in_channel // groups, 3, 3))
 
     # Get the std
-    conv_bn_std_data = np.sqrt(conv_bn_var_data + 1e-5)
+    conv_bn_std_data = np.sqrt(conv_bn_var_data + eps)
     # Reshape BN Gamma as (out_channels, 1, 1, 1)
     conv_bn_t_data = np.reshape(conv_bn_gamma_data / conv_bn_std_data, newshape=(-1, 1, 1, 1))
     # Fuse BN to Conv weight
@@ -114,71 +117,158 @@ def fuse_conv_bn(weight_folder, weight_folder_prefix, kernel_size, in_channel, o
     return conv_weight_fused_data, conv_bn_fused_beta_data
 
 
-def bn_fuse(weight_folder, weight_folder_prefix, in_channel, out_channel, groups=1):
+def block_convert(weight_folder, weight_folder_prefix, eps, in_channel, out_channel, groups, stride):
     """
-    Fuse BN as a ConvLayer with constant weight.
+    Convert RepVGG Block
     :param weight_folder: The name for the folder, example: snapshot_epoch_90
     :param weight_folder_prefix: The prefix name for the folder, example: RepVGGstage_3_17
-    :param kernel_size: The kernel size, if it is 1x1, it will be pad to 3x3
-    :return: Fused kernel weight, Fused kernel bias
+    :param eps: The epsilon used in BN Layer variance
+    :param in_channel: The num of input channel.
+    :param out_channel: The num of output channel.
+    :param groups: The num of Group ConvLayer.
+    :param stride: The stride of Block. We will convert different branch according to the stride.
+    :return:
     """
-    input_dim = in_channel // groups
-    # Because Identity ensure inchannel equal to outchannel.
-    kernel_value = np.zeros(shape=(in_channel, input_dim, 3, 3), dtype=np.float32)
+    conv_weight_1x1, conv_bias_1x1 = conv_bn_fuse(weight_folder,
+                                                  weight_folder_prefix,
+                                                  1,
+                                                  eps,
+                                                  in_channel,
+                                                  out_channel,
+                                                  groups=groups)
+    conv_weight_3x3, conv_bias_3x3 = conv_bn_fuse(weight_folder,
+                                                  weight_folder_prefix,
+                                                  3,
+                                                  eps,
+                                                  in_channel,
+                                                  out_channel,
+                                                  groups=groups)
+    if stride == 1:
+        # Convert 1x1, 3x3 conv+bn and identity+bn.
+        identity_weight, identity_bias = conv_bn_fuse(weight_folder,
+                                                      weight_folder_prefix,
+                                                      0,
+                                                      eps,
+                                                      in_channel,
+                                                      out_channel,
+                                                      groups=groups)
+        fused_weight = conv_weight_1x1 + conv_weight_3x3 + identity_weight
+        fused_bias = conv_bias_1x1 + conv_bias_3x3 + identity_bias
+    elif stride == 2:
+        # Convert 1x1, 3x3 conv+bn.
+        fused_weight = conv_weight_1x1 + conv_weight_3x3
+        fused_bias = conv_bias_1x1 + conv_bias_3x3
+    else:
+        raise Exception("Unsupported stride, only support 1 or 2")
 
-    # Identity equal to a unit matrix
-    for i in range(in_channel):
-        kernel_value[i, i%input_dim, 1, 1] = 1
+    return fused_weight, fused_bias
 
-    # Concat strings to get the folder name.
-    kernel_bn_mean = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[0]
-    kernel_bn_var = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[1]
-    kernel_bn_beta = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[2]
-    kernel_bn_gamma = weight_folder_prefix + "_" + IDENTITY_BRANCH_BN_PARAM_NAME[3]
+
+def linear_convert(weight_folder, in_channel, out_channel):
+    """
+    Convert Linear Layer
+    :param weight_folder:  name for the folder, example: snapshot_epoch_90
+    :param in_channel: The input channel.
+    :param out_channel: The output channel.
+    :return: return weight and bias.
+    """
+    classify_weight_name = CLASSIFY_NAME+"_"+CLASSIFY_BRANCH_PARAM_NAME[0]
+    classify_bias_name = CLASSIFY_NAME+"_"+CLASSIFY_BRANCH_PARAM_NAME[1]
 
     # concat "out" to get the weight file.
-    bn_mean_data_name = os.path.join(weight_folder, kernel_bn_mean, 'out')
-    bn_var_data_name = os.path.join(weight_folder, kernel_bn_var, 'out')
-    bn_beta_data_name = os.path.join(weight_folder, kernel_bn_beta, 'out')
-    bn_gamma_data_name = os.path.join(weight_folder, kernel_bn_gamma, 'out')
+    classify_weight_name = os.path.join(weight_folder, classify_weight_name, 'out')
+    classify_bias_name = os.path.join(weight_folder, classify_bias_name, 'out')
 
     # Read data from weight file.
-    with open(bn_mean_data_name, 'rb') as f:
-        bn_mean_data = f.read()
-        bn_mean_data = np.frombuffer(bn_mean_data, dtype=np.float32)
+    with open(classify_weight_name, 'rb') as f:
+        classify_weight_data = f.read()
+        classify_weight_data = np.frombuffer(classify_weight_data, dtype=np.float32)
 
-    with open(bn_var_data_name, 'rb') as f:
-        bn_var_data = f.read()
-        bn_var_data = np.frombuffer(bn_var_data, dtype=np.float32)
+    with open(classify_bias_name, 'rb') as f:
+        classify_bias_data = f.read()
+        classify_bias_data = np.frombuffer(classify_bias_data, dtype=np.float32)
 
-    with open(bn_gamma_data_name, 'rb') as f:
-        bn_gamma_data = f.read()
-        bn_gamma_data = np.frombuffer(bn_gamma_data, dtype=np.float32)
+    # Reshape the conv weight.
+    classify_weight_data = np.reshape(classify_weight_data, newshape=(out_channel, in_channel))
 
-    with open(bn_beta_data_name, 'rb') as f:
-        bn_beta_data = f.read()
-        bn_beta_data = np.frombuffer(bn_beta_data, dtype=np.float32)
-
-    # Get the std
-    bn_std_data = np.sqrt(bn_var_data + 1e-5)
-    # Reshape BN Gamma as (out_channels, 1, 1, 1)
-    bn_t_data = np.reshape(bn_gamma_data / bn_std_data, newshape=(-1, 1, 1, 1))
-    # Fuse BN to Conv weight
-    bn_fused_weight_data = kernel_value * bn_t_data
-    bn_fused_beta_data = bn_beta_data - bn_mean_data * bn_gamma_data / bn_std_data
-
-    return bn_fused_weight_data, bn_fused_beta_data
+    return classify_weight_data, classify_bias_data
 
 
-# out_channel = 192
-# in_channel = 192
-#
-# conv_weight_fused_data, conv_bn_fused_beta_data = fuse_conv_bn(weight_folder,
-#                                                                sample_weight_folder,
-#                                                                3,
-#                                                                out_channel,
-#                                                                in_channel)
-#
+def conv_convert(num_blocks, num_filters, groupwise_layers, eps):
+    if groupwise_layers is not None:
+        groups_map = {l: 1 for l in groupwise_layers}
+    else:
+        groups_map = {}
+
+    foldername_hashlist = {}
+    for stage_idx in range(len(num_blocks) + 1):
+        if stage_idx == 0:
+            # Stage 0 only contains 1 layer
+            layer_idx = 0
+            layer_name = "RepVGGstage" + "_" + str(stage_idx) + "_" + str(layer_idx)
+            stride = 2
+            groups = groups_map.get(layer_idx, 1)
+            in_channel = 3
+            out_channel = int(num_filters[0])
+            conv_fused_weight, conv_fused_bias = block_convert(weight_folder,
+                                                               layer_name,
+                                                               eps=eps,
+                                                               in_channel=in_channel,
+                                                               out_channel=out_channel,
+                                                               groups=groups,
+                                                               stride=stride)
+            conv_weight_name = layer_name + "_3x3_weight"
+            conv_bias_name = layer_name + "_3x3_bias"
+            foldername_hashlist.update({conv_weight_name: conv_fused_weight})
+            foldername_hashlist.update({conv_bias_name: conv_fused_bias})
+        else:
+            for layer_idx in range(num_blocks[stage_idx - 1]):
+                if layer_idx == 0:
+                    stride = 2
+                    in_channel = int(num_filters[int(stage_idx) - 1])
+                    out_channel = int(num_filters[int(stage_idx)])
+                else:
+                    stride = 1
+                    in_channel = int(num_filters[int(stage_idx)])
+                    out_channel = in_channel
+
+                groups = groups_map.get(layer_idx, 1)
+                # Add prevent idx and stage 0 layer idx is 1
+                cur_layer_idx = layer_idx + sum(num_blocks[0: (stage_idx-1)]) + 1
+                layer_name = "RepVGGstage" + "_" + str(stage_idx) + "_" + str(cur_layer_idx)
+
+                conv_fused_weight, conv_fused_bias = block_convert(weight_folder,
+                                                                   layer_name,
+                                                                   eps=eps,
+                                                                   in_channel=in_channel,
+                                                                   out_channel=out_channel,
+                                                                   groups=groups,
+                                                                   stride=stride)
+                conv_weight_name = layer_name+"_3x3_weight"
+                conv_bias_name = layer_name+"_3x3_bias"
+                foldername_hashlist.update({conv_weight_name: conv_fused_weight})
+                foldername_hashlist.update({conv_bias_name: conv_fused_bias})
+
+    return foldername_hashlist
+
+
+optional_groupwise_layers = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
+
+width_multiplier = [0.75, 0.75, 0.75, 2.5]
+blocks_list = [2, 4, 14, 1]
+filters_list = [min(64, int(64 * width_multiplier[0])), 64 * width_multiplier[0], 128 * width_multiplier[1],
+               256 * width_multiplier[2], 512 * width_multiplier[3]]
+
+weight_folder = "snapshot_epoch_0"
+
+weight_folder_list = os.listdir(weight_folder)
+
+
+foldername_hashlist = conv_convert(blocks_list, filters_list, None, eps=1e-5)
+print(foldername_hashlist)
+
+
+
 # import oneflow as flow
 # import oneflow.typing as tp
 #
@@ -204,10 +294,8 @@ def bn_fuse(weight_folder, weight_folder_prefix, in_channel, out_channel, groups
 #     return conv_add_bias
 #
 #
-# # check = flow.train.CheckPoint()
-# # check.init()
-# flow.load_variables({"weight": conv_weight_fused_data,
-#                      "bias": conv_bn_fused_beta_data})
+# flow.load_variables({"weight": fused_w,
+#                      "bias": fused_b})
 #
 # # x = np.random.randn(1, 192, 64, 64).astype(np.float32)
 # x = np.ones(shape=(1, 192, H, W)).astype(np.float32)
@@ -215,5 +303,4 @@ def bn_fuse(weight_folder, weight_folder_prefix, in_channel, out_channel, groups
 # fused_out = test_fused_conv(x)
 # print(fused_out.shape)
 # print(fused_out)
-# np.save('fused_conv_bn', fused_out)
-
+# np.save('fused_block', fused_out)
