@@ -1,20 +1,39 @@
 """
+Copyright 2020 The OneFlow Authors. All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
 Convert BN->CONV and CONV+BN->CONV
 """
 import numpy as np
 import os
 
-CONV_WEIGHT_NAME = "conv_conv_layer_weight"
+# These name is designed according to the repvgg.py
+# Be careful if you want to change it, it may cause some weight didn't convert in right way.
+
+CONV_WEIGHT_NAME = "conv_layer_weight"
+CONV_BIAS_NAME = "conv_layer_bias"
+
 CONV_KERNEL_SIZE_NAME = ["1x1", "3x3"]
-CONV_BRANCH_BN_PARAM_NAME = ["conv_bn_layer-moving_mean",
-                             "conv_bn_layer-moving_variance",
-                             "conv_bn_layer-beta",
-                             "conv_bn_layer-gamma"]
+CONV_BRANCH_BN_PARAM_NAME = ["bn_layer-moving_mean",
+                             "bn_layer-moving_variance",
+                             "bn_layer-beta",
+                             "bn_layer-gamma"]
 IDENTITY_BRANCH_BN_PARAM_NAME = ["identity_bn_layer-moving_mean",
                                  "identity_bn_layer-moving_variance",
                                  "identity_bn_layer-beta",
                                  "identity_bn_layer-gamma"]
-CLASSIFY_NAME="RepVGGclassify"
+CLASSIFY_NAME = "RepVGGclassify"
 CLASSIFY_BRANCH_PARAM_NAME = ["dense_weight", "dense_bias"]
 
 
@@ -24,10 +43,10 @@ def conv_bn_fuse(weight_folder, weight_folder_prefix, kernel_size, eps, in_chann
     :param weight_folder: The name for the folder, example: snapshot_epoch_90
     :param weight_folder_prefix: The prefix name for the folder, example: RepVGGstage_3_17
     :param kernel_size: The kernel size, if it is 1x1, it will be pad to 3x3
-    :param if_identity: Whether the branch is identity.
     :param eps: The epsilon used in BN Layer variance
     :param in_channel: The num of input channel.
     :param out_channel: The num of output channel.
+    :param groups: The group num of ConvLayer.
     :return: Fused kernel weight, Fused kernel bias
     """
     assert in_channel // groups, "The input channel should be divided by groups"
@@ -167,13 +186,13 @@ def block_convert(weight_folder, weight_folder_prefix, eps, in_channel, out_chan
 def linear_convert(weight_folder, in_channel, out_channel):
     """
     Convert Linear Layer
-    :param weight_folder:  name for the folder, example: snapshot_epoch_90
+    :param weight_folder: The name for the folder, example: snapshot_epoch_90
     :param in_channel: The input channel.
     :param out_channel: The output channel.
     :return: return weight and bias.
     """
-    classify_weight_name = CLASSIFY_NAME+"_"+CLASSIFY_BRANCH_PARAM_NAME[0]
-    classify_bias_name = CLASSIFY_NAME+"_"+CLASSIFY_BRANCH_PARAM_NAME[1]
+    classify_weight_name = CLASSIFY_NAME + "_" + CLASSIFY_BRANCH_PARAM_NAME[0]
+    classify_bias_name = CLASSIFY_NAME + "_" + CLASSIFY_BRANCH_PARAM_NAME[1]
 
     # concat "out" to get the weight file.
     classify_weight_name = os.path.join(weight_folder, classify_weight_name, 'out')
@@ -188,13 +207,14 @@ def linear_convert(weight_folder, in_channel, out_channel):
         classify_bias_data = f.read()
         classify_bias_data = np.frombuffer(classify_bias_data, dtype=np.float32)
 
-    # Reshape the conv weight.
+    # Reshape the Dense weight.
     classify_weight_data = np.reshape(classify_weight_data, newshape=(out_channel, in_channel))
 
     return classify_weight_data, classify_bias_data
 
 
-def conv_convert(num_blocks, num_filters, groupwise_layers, eps):
+def weight_convert(weight_folder, num_blocks, num_filters, classify_nums, groupwise_layers, eps):
+    # Convert the conv branch.
     if groupwise_layers is not None:
         groups_map = {l: 1 for l in groupwise_layers}
     else:
@@ -217,8 +237,8 @@ def conv_convert(num_blocks, num_filters, groupwise_layers, eps):
                                                                out_channel=out_channel,
                                                                groups=groups,
                                                                stride=stride)
-            conv_weight_name = layer_name + "_3x3_weight"
-            conv_bias_name = layer_name + "_3x3_bias"
+            conv_weight_name = layer_name + "_3x3_" + CONV_WEIGHT_NAME
+            conv_bias_name = layer_name + "_3x3_" + CONV_BIAS_NAME
             foldername_hashlist.update({conv_weight_name: conv_fused_weight})
             foldername_hashlist.update({conv_bias_name: conv_fused_bias})
         else:
@@ -234,7 +254,8 @@ def conv_convert(num_blocks, num_filters, groupwise_layers, eps):
 
                 groups = groups_map.get(layer_idx, 1)
                 # Add prevent idx and stage 0 layer idx is 1
-                cur_layer_idx = layer_idx + sum(num_blocks[0: (stage_idx-1)]) + 1
+                cur_layer_idx = layer_idx + sum(num_blocks[0: (stage_idx - 1)]) + 1
+                # Special process.
                 layer_name = "RepVGGstage" + "_" + str(stage_idx) + "_" + str(cur_layer_idx)
 
                 conv_fused_weight, conv_fused_bias = block_convert(weight_folder,
@@ -244,63 +265,54 @@ def conv_convert(num_blocks, num_filters, groupwise_layers, eps):
                                                                    out_channel=out_channel,
                                                                    groups=groups,
                                                                    stride=stride)
-                conv_weight_name = layer_name+"_3x3_weight"
-                conv_bias_name = layer_name+"_3x3_bias"
+                conv_weight_name = layer_name + "_3x3_" + CONV_WEIGHT_NAME
+                conv_bias_name = layer_name + "_3x3_" + CONV_BIAS_NAME
                 foldername_hashlist.update({conv_weight_name: conv_fused_weight})
                 foldername_hashlist.update({conv_bias_name: conv_fused_bias})
+
+    # Convert Final Dense Layer.
+    linear_weight_name = CLASSIFY_NAME + "_" + CLASSIFY_BRANCH_PARAM_NAME[0]
+    linear_bias_name = CLASSIFY_NAME + "_" + CLASSIFY_BRANCH_PARAM_NAME[1]
+
+    linear_weight, linear_bias = linear_convert(weight_folder, in_channel=int(num_filters[-1]),
+                                                out_channel=classify_nums)
+    foldername_hashlist.update({linear_weight_name: linear_weight})
+    foldername_hashlist.update({linear_bias_name: linear_bias})
 
     return foldername_hashlist
 
 
+# The RepVGG settings, you can also find in `repvgg.py`.
 optional_groupwise_layers = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
 
 width_multiplier = [0.75, 0.75, 0.75, 2.5]
 blocks_list = [2, 4, 14, 1]
 filters_list = [min(64, int(64 * width_multiplier[0])), 64 * width_multiplier[0], 128 * width_multiplier[1],
-               256 * width_multiplier[2], 512 * width_multiplier[3]]
-
-weight_folder = "snapshot_epoch_0"
-
-weight_folder_list = os.listdir(weight_folder)
+                256 * width_multiplier[2], 512 * width_multiplier[3]]
 
 
-foldername_hashlist = conv_convert(blocks_list, filters_list, None, eps=1e-5)
-print(foldername_hashlist)
+# ====== The code in Below is test code. ======
+# We choose `snapshot_epoch_1` as example.
+weight_folder_name = "snapshot_epoch_1"
+
+foldername_hashlist = weight_convert(weight_folder_name, blocks_list, filters_list, 1000, None, eps=1e-5)
 
 
+from repvgg import RepVGG_A0
+import oneflow as flow
+import oneflow.typing as tp
 
-# import oneflow as flow
-# import oneflow.typing as tp
-#
-# H = W = 16
-#
-#
-# @flow.global_function()
-# def test_fused_conv(x: tp.Numpy.Placeholder(shape=(1, 192, H, W))) -> tp.Numpy:
-#     weight_shape = (192, 192, 3, 3)
-#     _conv_weight = flow.get_variable(
-#         name="weight",
-#         shape=weight_shape,
-#         initializer=flow.ones_initializer()
-#     )
-#     conv_out = flow.nn.conv2d(x, _conv_weight, 1, (0, 0, 1, 1), groups=1, name="conv2d")
-#     bias_shape = (192,)
-#     conv_bias = flow.get_variable(
-#         name="bias",
-#         shape=bias_shape,
-#         initializer=flow.ones_initializer()
-#     )
-#     conv_add_bias = flow.nn.bias_add(conv_out, bias=conv_bias)
-#     return conv_add_bias
-#
-#
-# flow.load_variables({"weight": fused_w,
-#                      "bias": fused_b})
-#
-# # x = np.random.randn(1, 192, 64, 64).astype(np.float32)
-# x = np.ones(shape=(1, 192, H, W)).astype(np.float32)
-#
-# fused_out = test_fused_conv(x)
-# print(fused_out.shape)
-# print(fused_out)
-# np.save('fused_block', fused_out)
+
+@flow.global_function()
+def test_fused_net(x: tp.Numpy.Placeholder(shape=(1, 3, 224, 224))) -> tp.Numpy:
+    # Set deploy as True.
+    out = RepVGG_A0(x, None, deploy=True)
+    return out
+
+
+# Load the converted weight.
+flow.load_variables(foldername_hashlist)
+x = np.ones(shape=(1, 3, 224, 224))
+fused_out = test_fused_net(x)
+# Save the output of Fused Net.
+np.save('fused_net', fused_out)

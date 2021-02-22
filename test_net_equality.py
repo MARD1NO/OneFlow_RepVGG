@@ -13,22 +13,21 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Get original RepVGG output.
+Evaluate the error.
 """
-from repvgg import RepVGG_A0
-import oneflow as flow
-import oneflow.typing as tp
 import numpy as np
 
-
-@flow.global_function()
-def test_original_net(x: tp.Numpy.Placeholder(shape=(1, 3, 224, 224))) -> tp.Numpy:
-    out = RepVGG_A0(x, None, deploy=False)
-    return out
+original_output = np.load('./original_net.npy')
+fused_output = np.load('fused_net.npy')
 
 
-# Load the snapshot. 
-flow.load_variables(flow.checkpoint.get('./snapshot_epoch_1'))
-x = np.ones(shape=(1, 3, 224, 224))
-original_out = test_original_net(x)
-np.save('original_net', original_out)
+original_flatten = original_output.flatten()
+fused_flatten = fused_output.flatten()
+abs_val = 0
+for i in range(len(original_flatten)):
+    # Compute the accumulate abs value.
+    abs_val += np.abs(original_flatten[i]-fused_flatten[i])
+    # Compute the Maximum abs value.
+    # abs_val = max(np.abs(original_flatten[i]-fused_flatten[i]), abs_val)
+
+print(abs_val)
