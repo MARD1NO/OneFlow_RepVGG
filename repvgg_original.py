@@ -15,7 +15,7 @@ limitations under the License.
 
 Get original RepVGG output.
 """
-from repvgg import RepVGG_A0
+from Classification.cnns.repvggmodel import RepVGG_A0
 import oneflow as flow
 import oneflow.typing as tp
 import numpy as np

@@ -293,26 +293,25 @@ filters_list = [min(64, int(64 * width_multiplier[0])), 64 * width_multiplier[0]
 
 # ====== The code in Below is test code. ======
 # We choose `snapshot_epoch_1` as example.
-weight_folder_name = "snapshot_epoch_1"
-
-foldername_hashlist = weight_convert(weight_folder_name, blocks_list, filters_list, 1000, None, eps=1e-5)
-
-
-from repvgg import RepVGG_A0
-import oneflow as flow
-import oneflow.typing as tp
-
-
-@flow.global_function()
-def test_fused_net(x: tp.Numpy.Placeholder(shape=(1, 3, 224, 224))) -> tp.Numpy:
-    # Set deploy as True.
-    out = RepVGG_A0(x, None, deploy=True)
-    return out
-
-
-# Load the converted weight.
-flow.load_variables(foldername_hashlist)
-x = np.ones(shape=(1, 3, 224, 224))
-fused_out = test_fused_net(x)
-# Save the output of Fused Net.
-np.save('fused_net', fused_out)
+# weight_folder_name = "snapshot_epoch_1"
+# foldername_hashlist = weight_convert(weight_folder_name, blocks_list, filters_list, 1000, None, eps=1e-5)
+#
+#
+# from Classification.cnns.repvggmodel import RepVGG_A0
+# import oneflow as flow
+# import oneflow.typing as tp
+#
+#
+# @flow.global_function()
+# def test_fused_net(x: tp.Numpy.Placeholder(shape=(1, 3, 224, 224))) -> tp.Numpy:
+#     # Set deploy as True.
+#     out = RepVGG_A0(x, None, deploy=True)
+#     return out
+#
+#
+# # Load the converted weight.
+# flow.load_variables(foldername_hashlist)
+# x = np.ones(shape=(1, 3, 224, 224))
+# fused_out = test_fused_net(x)
+# # Save the output of Fused Net.
+# np.save('fused_net', fused_out)

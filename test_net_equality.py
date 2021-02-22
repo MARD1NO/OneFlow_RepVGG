@@ -30,4 +30,4 @@ for i in range(len(original_flatten)):
     # Compute the Maximum abs value.
     # abs_val = max(np.abs(original_flatten[i]-fused_flatten[i]), abs_val)
 
-print(abs_val)
+print("Abs Error is: ", abs_val)
