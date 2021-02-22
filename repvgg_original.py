@@ -27,7 +27,7 @@ def test_original_net(x: tp.Numpy.Placeholder(shape=(1, 3, 224, 224))) -> tp.Num
     return out
 
 
-# Load the snapshot. 
+# Load the snapshot.
 flow.load_variables(flow.checkpoint.get('./snapshot_epoch_1'))
 x = np.ones(shape=(1, 3, 224, 224))
 original_out = test_original_net(x)

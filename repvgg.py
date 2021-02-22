@@ -15,8 +15,6 @@ limitations under the License.
 """
 
 import oneflow as flow
-import oneflow.typing as tp
-import numpy as np
 import math
 
 
@@ -37,7 +35,8 @@ def _get_regularizer(model_name):
         return flow.regularizers.l2(0.0001)
 
 
-def torch_style_conv(x, out_channels, kernel_size, stride, padding, groups=1, use_bias=False, trainable=True, name="conv_"):
+def torch_style_conv(x, out_channels, kernel_size, stride, padding, groups=1, use_bias=False, trainable=True,
+                     name="conv_"):
     """
     The Conv2D Layer
     :param x: The input Tensor.
@@ -70,7 +69,7 @@ def torch_style_conv(x, out_channels, kernel_size, stride, padding, groups=1, us
     else:
         _conv_bias = flow.get_variable(
             name=name + "bias",
-            shape=(out_channels, ),
+            shape=(out_channels,),
             initializer=flow.zeros_initializer(),
             dtype=x.dtype,
             trainable=trainable
@@ -262,9 +261,6 @@ class RepVGG(object):
         _gap = flow.nn.avg_pool2d(_stage4, ksize=[7, 7], strides=1, padding="VALID", name=self.name + "AveragePool")
         _flatten = flow.flatten(_gap, name=self.name + "flatten", start_dim=1, end_dim=-1)
 
-        # return _flatten
-        # Torch style dense
-
         _linear = torch_style_linear(
             _flatten, self.num_classes, self.trainable, name=self.name + "classify"
         )
@@ -334,3 +330,49 @@ def RepVGG_B1g4(images, args, trainable=True, training=True, deploy=False):
     return model
 
 
+def RepVGG_B2(images, args, trainable=True, training=True, deploy=False):
+    repvggB2 = RepVGG(images, num_blocks=[4, 6, 16, 1], num_classes=1000,
+                      width_multiplier=[2.5, 2.5, 2.5, 5], override_groups_map=None,
+                      trainable=trainable, training=training, deploy=deploy)
+    model = repvggB2.build_network()
+    return model
+
+
+def RepVGG_B2g2(images, args, trainable=True, training=True, deploy=False):
+    repvggB2g2 = RepVGG(images, num_blocks=[4, 6, 16, 1], num_classes=1000,
+                        width_multiplier=[2.5, 2.5, 2.5, 5], override_groups_map=g2_map,
+                        trainable=trainable, training=training, deploy=deploy)
+    model = repvggB2g2.build_network()
+    return model
+
+
+def RepVGG_B2g4(images, args, trainable=True, training=True, deploy=False):
+    repvggB2g4 = RepVGG(images, num_blocks=[4, 6, 16, 1], num_classes=1000,
+                        width_multiplier=[2.5, 2.5, 2.5, 5], override_groups_map=g4_map,
+                        trainable=trainable, training=training, deploy=deploy)
+    model = repvggB2g4.build_network()
+    return model
+
+
+def RepVGG_B3(images, args, trainable=True, training=True, deploy=False):
+    repvggB3 = RepVGG(images, num_blocks=[4, 6, 16, 1], num_classes=1000,
+                      width_multiplier=[3, 3, 3, 5], override_groups_map=None,
+                      trainable=trainable, training=training, deploy=deploy)
+    model = repvggB3.build_network()
+    return model
+
+
+def RepVGG_B3g2(images, args, trainable=True, training=True, deploy=False):
+    repvggB3g2 = RepVGG(images, num_blocks=[4, 6, 16, 1], num_classes=1000,
+                        width_multiplier=[3, 3, 3, 5], override_groups_map=g2_map,
+                        trainable=trainable, training=training, deploy=deploy)
+    model = repvggB3g2.build_network()
+    return model
+
+
+def RepVGG_B3g4(images, args, trainable=True, training=True, deploy=False):
+    repvggB3g4 = RepVGG(images, num_blocks=[4, 6, 16, 1], num_classes=1000,
+                        width_multiplier=[3, 3, 3, 5], override_groups_map=g4_map,
+                        trainable=trainable, training=training, deploy=deploy)
+    model = repvggB3g4.build_network()
+    return model
