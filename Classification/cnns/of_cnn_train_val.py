@@ -15,7 +15,7 @@ limitations under the License.
 """
 import os
 import math
-import numpy as np 
+import numpy as np
 import oneflow as flow
 import ofrecord_util
 import optimizer_util
@@ -41,7 +41,6 @@ val_batch_size = total_device_num * args.val_batch_size_per_device
 epoch_size = math.ceil(args.num_examples / train_batch_size)
 num_val_steps = int(args.num_val_examples / val_batch_size)
 
-
 model_dict = {
     "resnet50": resnet_model.resnet50,
     "vgg": vgg_model.vgg16bn,
@@ -58,9 +57,8 @@ model_dict = {
     "repvggB1": repvggmodel.RepVGG_B1
 }
 
-
 flow.config.gpu_device_num(args.gpu_num_per_node)
-#flow.config.enable_debug_mode(True)
+# flow.config.enable_debug_mode(True)
 
 if args.use_fp16 and args.num_nodes * args.gpu_num_per_node > 1:
     flow.config.collective_boxing.nccl_fusion_all_reduce_use_buffer(False)
@@ -71,33 +69,31 @@ if args.nccl_fusion_threshold_mb:
 if args.nccl_fusion_max_ops:
     flow.config.collective_boxing.nccl_fusion_max_ops(args.nccl_fusion_max_ops)
 
+
 def label_smoothing(labels, classes, eta, dtype):
     assert classes > 0
     assert eta >= 0.0 and eta < 1.0
     return flow.one_hot(labels, depth=classes, dtype=dtype,
-                        on_value=1 - eta + eta / classes, off_value=eta/classes)
+                        on_value=1 - eta + eta / classes, off_value=eta / classes)
 
-def label_smooth_loss(labels, logits, classes, eta, dtype, name="labelsmooth"): 
+
+def label_smooth_loss(labels, logits, classes, eta, dtype, name="labelsmooth"):
     smooth_labels = label_smoothing(labels, classes, eta, dtype)
-    return flow.nn.softmax_cross_entropy_with_logits(smooth_labels, logits, name=name+"labelsmooth_loss")
+    return flow.nn.softmax_cross_entropy_with_logits(smooth_labels, logits, name=name + "labelsmooth_loss")
+
 
 def mixup_data(x, y, alpha=1.0):
     """
     Mix up input data 
     """
-    if alpha > 0: 
+    if alpha > 0:
         lam = np.random.beta(1.0, 1.0)
-    else: 
-        lam = 1.0 
-
-    # lam = flow.constant_scalar(value=0.5, dtype=flow.float32)
+    else:
+        lam = 1.0
 
     rand_perm = flow.random.generate_random_batch_permutation_indices(x)
-    mixed_x = lam*x + (1-lam)*flow.gather(x, rand_perm, axis=0, name="rand_perm_x")
-    # mixed_x = flow.gather(x, rand_perm, axis=0, name="rand_perm_x")
+    mixed_x = lam * x + (1 - lam) * flow.gather(x, rand_perm, axis=0, name="rand_perm_x")
     y_a, y_b = y, flow.gather(y, rand_perm, axis=0, name="rand_perm_y")
-    # return mixed_x, y_a, y_b, lam
-    # return x, y_a, y_b, lam
     return mixed_x, y_a, y_b, lam
 
 
@@ -111,39 +107,30 @@ def TrainNet():
     else:
         print("Loading synthetic data.")
         (labels, images) = ofrecord_util.load_synthetic(args)
-    
-    if not args.mixup: 
-        print("No MixUp")
+
+    if not args.mixup:
         logits = model_dict[args.model](images, args)
         if args.label_smoothing > 0:
-            # one_hot_labels = label_smoothing(labels, args.num_classes, args.label_smoothing, logits.dtype)
-            # loss = flow.nn.softmax_cross_entropy_with_logits(one_hot_labels, logits, name="softmax_loss")
-            
-            loss = label_smooth_loss(labels, logits, args.num_classes, args.label_smoothing, logits.dtype, name="labelsmooth_loss")
+            loss = label_smooth_loss(labels, logits, args.num_classes, args.label_smoothing, logits.dtype,
+                                     name="labelsmooth_loss")
         else:
             loss = flow.nn.sparse_softmax_cross_entropy_with_logits(labels, logits, name="softmax_loss")
-    else: 
-        # Do mixup
-        print("Here is mixup")
+    else:
+        # Do mixup, have bug in multi devices.
         mixed_x, y_a, y_b, lam = mixup_data(images, labels)
         logits = model_dict[args.model](mixed_x, args)
-        if args.label_smoothing > 0: 
-            loss = lam*label_smooth_loss(y_a, logits, args.num_classes, args.label_smoothing, logits.dtype, name="labelsmooth_loss1") + (1-lam)*label_smooth_loss(y_b, logits, args.num_classes, args.label_smoothing, logits.dtype, name="label_smooth_loss2")
-            print(loss.shape)
-            print("11111")
-        else: 
-            # loss = lam*flow.nn.sparse_softmax_cross_entropy_with_logits(y_a, logits, name="softmax_loss1") + (1-lam)*flow.nn.sparse_softmax_cross_entropy_with_logits(y_b, logits, name="softmax_loss2")
-            print("Y_a shape is: ", y_a.shape)
-            print("logits shape is: ", logits.shape)
-
+        if args.label_smoothing > 0:
+            loss = lam * label_smooth_loss(y_a, logits, args.num_classes, args.label_smoothing, logits.dtype,
+                                           name="labelsmooth_loss1") + (1 - lam) * label_smooth_loss(y_b, logits,
+                                                                                                     args.num_classes,
+                                                                                                     args.label_smoothing,
+                                                                                                     logits.dtype,
+                                                                                                     name="label_smooth_loss2")
+        else:
             loss = flow.nn.sparse_softmax_cross_entropy_with_logits(y_a, logits, name="softmax_loss1")
-            print("loss!!!")
-            print("loss.shape", loss.shape)
 
     loss = flow.math.reduce_mean(loss)
-    print("loss.shape", loss.shape)
     predictions = flow.nn.softmax(logits)
-    print("predictions: ", predictions.shape)
     outputs = {"loss": loss, "predictions": predictions, "labels": labels}
 
     # set up warmup,learning rate and optimizer
@@ -171,7 +158,6 @@ def InferenceNet():
 def main():
     InitNodes(args)
     flow.env.log_dir(args.log_dir)
-    print("!!!!!===!!!!", args.model_save_dir)
     snapshot = Snapshot(args.model_save_dir, args.model_load_dir)
 
     for epoch in range(args.num_epochs):
@@ -181,7 +167,7 @@ def main():
             TrainNet().async_get(metric.metric_cb(epoch, i))
 
         if args.val_data_dir:
-            metric = Metric(desc='validation', calculate_batches=num_val_steps, 
+            metric = Metric(desc='validation', calculate_batches=num_val_steps,
                             batch_size=val_batch_size)
             for i in range(num_val_steps):
                 InferenceNet().async_get(metric.metric_cb(epoch, i))
